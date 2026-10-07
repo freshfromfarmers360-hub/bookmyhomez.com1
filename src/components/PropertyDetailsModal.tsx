@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Property, User } from '../types';
 import {
   X,
@@ -16,6 +16,10 @@ import {
   Video,
   Star,
   Trash2,
+  Edit3,
+  Upload,
+  Calendar,
+  Save,
 } from 'lucide-react';
 
 interface PropertyDetailsModalProps {
@@ -24,6 +28,7 @@ interface PropertyDetailsModalProps {
   onClose: () => void;
   onToggleStatus: (property: Property) => void;
   formatCurrency: (val: number) => string;
+  onUpdateProperty?: (updatedProperty: Property) => void;
 }
 
 interface Review {
@@ -39,14 +44,23 @@ export const PropertyDetailsModal: React.FC<PropertyDetailsModalProps> = ({
   onClose,
   onToggleStatus,
   formatCurrency,
+  onUpdateProperty,
 }) => {
   const [copied, setCopied] = useState(false);
   const [currentMediaIndex, setCurrentMediaIndex] = useState(0);
 
+  // Edit Mode states
+  const [isEditing, setIsEditing] = useState(false);
+  const [availDate, setAvailDate] = useState<string>(property?.availDate || '');
+  const [uploadedImages, setUploadedImages] = useState<string[]>(
+    property?.images && property.images.length > 0 ? property.images : []
+  );
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   // --- Reviews State ---
   const [reviews, setReviews] = useState<Review[]>(
     property?.reviews || [
-      { name: "Suresh Kumar", comment: "Property is very clean and located in a prime area.", rating: 5 },
+      { name: 'Suresh Kumar', comment: 'Property is very clean and located in a prime area.', rating: 5 },
     ]
   );
   const [reviewerName, setReviewerName] = useState('');
@@ -55,15 +69,58 @@ export const PropertyDetailsModal: React.FC<PropertyDetailsModalProps> = ({
 
   if (!property) return null;
 
+  const isOwner =
+    currentUser &&
+    (currentUser.id === property.ownerId || currentUser.role === 'Administrator');
+
+  // Handle Photo Upload via Local Files
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    Array.from(files).forEach((file) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (typeof reader.result === 'string') {
+          setUploadedImages((prev) => [...prev, reader.result as string]);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleRemoveImage = (indexToRemove: number) => {
+    setUploadedImages((prev) => prev.filter((_, idx) => idx !== indexToRemove));
+    if (currentMediaIndex >= uploadedImages.length - 1 && currentMediaIndex > 0) {
+      setCurrentMediaIndex((prev) => prev - 1);
+    }
+  };
+
+  const handleSaveChanges = () => {
+    const updatedProperty: Property = {
+      ...property,
+      availDate: availDate,
+      images: uploadedImages.length > 0 ? uploadedImages : property.images,
+    };
+
+    if (onUpdateProperty) {
+      onUpdateProperty(updatedProperty);
+    } else {
+      property.availDate = availDate;
+      property.images = updatedProperty.images;
+    }
+
+    setIsEditing(false);
+  };
+
   // Combine images and direct video/videoUrl into one media array
-  const images =
-    property.images && property.images.length > 0
-      ? property.images
+  const currentImages =
+    uploadedImages.length > 0
+      ? uploadedImages
       : ['https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?auto=format&fit=crop&w=1000&q=80'];
 
-  // Support both property.videoUrl and property.video
   const directVideo = property.videoUrl || (property as any).video;
-  const mediaList = directVideo ? [...images, directVideo] : images;
+  const mediaList = directVideo ? [...currentImages, directVideo] : currentImages;
 
   // Enhanced check for video items
   const isVideoItem = (url: string) => {
@@ -84,10 +141,6 @@ export const PropertyDetailsModal: React.FC<PropertyDetailsModalProps> = ({
     setCurrentMediaIndex((prev) => (prev === mediaList.length - 1 ? 0 : prev + 1));
   };
 
-  const isOwner =
-    currentUser &&
-    (currentUser.id === property.ownerId || currentUser.role === 'Administrator');
-
   const whatsappMessage = encodeURIComponent(
     `Hi, I am interested in your property "${property.title}" listed on BookMyHomez for ₹${formatCurrency(
       property.price
@@ -95,11 +148,13 @@ export const PropertyDetailsModal: React.FC<PropertyDetailsModalProps> = ({
   );
 
   const handleShare = () => {
-    const shareText = `Check out "${property.title}" in ${property.locality}, ${property.city} for ₹${formatCurrency(property.price)} on BookMyHomez!`;
-    
+    const shareText = `Check out "${property.title}" in ${property.locality}, ${property.city} for ₹${formatCurrency(
+      property.price
+    )} on BookMyHomez!`;
+
     const propertyId = (property as any).id || (property as any)._id || '';
-    const shareUrl = propertyId 
-      ? `${window.location.origin}/?propertyId=${propertyId}` 
+    const shareUrl = propertyId
+      ? `${window.location.origin}/?propertyId=${propertyId}`
       : window.location.href;
 
     if (navigator.share) {
@@ -142,21 +197,43 @@ export const PropertyDetailsModal: React.FC<PropertyDetailsModalProps> = ({
     property.reviews = updatedReviews;
   };
 
-  const currentMedia = mediaList[currentMediaIndex];
+  const currentMedia = mediaList[currentMediaIndex] || mediaList[0];
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
       <div className="bg-slate-900 border border-slate-800 w-full max-w-3xl rounded-3xl p-6 relative max-h-[90vh] overflow-y-auto">
-        {/* Close Button */}
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 w-9 h-9 rounded-xl bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center transition cursor-pointer z-20"
-        >
-          <X className="w-5 h-5" />
-        </button>
+        {/* Top Header Buttons */}
+        <div className="absolute top-4 right-4 flex items-center gap-2 z-20">
+          {isOwner && (
+            <button
+              onClick={() => {
+                if (isEditing) {
+                  handleSaveChanges();
+                } else {
+                  setIsEditing(true);
+                }
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-md ${
+                isEditing
+                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                  : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+              }`}
+            >
+              {isEditing ? <Save className="w-3.5 h-3.5" /> : <Edit3 className="w-3.5 h-3.5" />}
+              {isEditing ? 'Save Changes' : 'Edit Property'}
+            </button>
+          )}
+
+          <button
+            onClick={onClose}
+            className="w-9 h-9 rounded-xl bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center transition cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
 
         {/* Media Slider Container */}
-        <div className="relative h-72 rounded-2xl overflow-hidden mb-4 bg-slate-950 group flex items-center justify-center">
+        <div className="relative h-72 rounded-2xl overflow-hidden mb-4 bg-slate-950 group flex items-center justify-center mt-6">
           {isVideoItem(currentMedia) ? (
             <video
               src={currentMedia}
@@ -230,6 +307,57 @@ export const PropertyDetailsModal: React.FC<PropertyDetailsModalProps> = ({
           </button>
         </div>
 
+        {/* Upload Photos Section (Shown when in Edit Mode) */}
+        {isEditing && (
+          <div className="mb-6 p-4 bg-slate-950/70 border border-dashed border-indigo-500/50 rounded-2xl">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+              <div>
+                <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-wider">
+                  Manage Photos
+                </h4>
+                <p className="text-[11px] text-slate-400">
+                  Select new images to add directly from your device
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-2 transition cursor-pointer"
+              >
+                <Upload className="w-3.5 h-3.5" /> Upload Photos
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="image/*"
+                onChange={handlePhotoUpload}
+                className="hidden"
+              />
+            </div>
+
+            {uploadedImages.length > 0 && (
+              <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+                {uploadedImages.map((img, i) => (
+                  <div
+                    key={i}
+                    className="relative w-full aspect-video rounded-lg overflow-hidden border border-slate-800 group"
+                  >
+                    <img src={img} alt="preview" className="w-full h-full object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveImage(i)}
+                      className="absolute inset-0 bg-rose-950/80 text-rose-300 opacity-0 group-hover:opacity-100 flex items-center justify-center transition cursor-pointer text-xs font-bold"
+                    >
+                      <Trash2 className="w-4 h-4 mr-1" /> Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Thumbnails Row */}
         {mediaList.length > 1 && (
           <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
@@ -266,7 +394,9 @@ export const PropertyDetailsModal: React.FC<PropertyDetailsModalProps> = ({
           </p>
 
           <a
-            href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${property.title}, ${property.locality}, ${property.city}`)}`}
+            href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+              `${property.title}, ${property.locality},${property.city}`
+            )}`}
             target="_blank"
             rel="noopener noreferrer"
             className="bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition border border-indigo-500/30 cursor-pointer shadow-md"
@@ -277,10 +407,14 @@ export const PropertyDetailsModal: React.FC<PropertyDetailsModalProps> = ({
         </div>
 
         <div className="text-3xl font-black text-emerald-400 mb-6">
-            ₹{formatCurrency(property.price)}
-            <span className="text-xs text-slate-400 font-normal ml-1">
-              {property.category === 'Rent' ? (property.rentType === 'Daily' ? '/ day' : '/ month') : ''}
-            </span>
+          ₹{formatCurrency(property.price)}
+          <span className="text-xs text-slate-400 font-normal ml-1">
+            {property.category === 'Rent'
+              ? property.rentType === 'Daily'
+                ? '/ day'
+                : '/ month'
+              : ''}
+          </span>
         </div>
 
         {/* Property Details Grid */}
@@ -347,15 +481,34 @@ export const PropertyDetailsModal: React.FC<PropertyDetailsModalProps> = ({
               ₹{property.deposit ? formatCurrency(property.deposit) : '0'}
             </span>
           </div>
-          <div>
-            <span className="text-slate-500 block">Available From:</span>
-            <span className="font-bold text-white mt-0.5 block">
-              {property.availDate || 'Immediate'}
+
+          {/* Available Date with Editable Input */}
+          <div className="bg-slate-900/60 p-2 rounded-xl border border-slate-800">
+            <span className="text-slate-400 block text-[11px] font-semibold flex items-center gap-1">
+              <Calendar className="w-3 h-3 text-indigo-400" /> Available From:
             </span>
+            {isEditing ? (
+              <input
+                type="text"
+                placeholder="e.g. Immediate or 2026-11-01"
+                value={availDate}
+                onChange={(e) => setAvailDate(e.target.value)}
+                className="mt-1 w-full bg-slate-950 border border-indigo-500 rounded p-1 text-white text-xs focus:outline-none"
+              />
+            ) : (
+              <span className="font-bold text-white mt-0.5 block">
+                {availDate || property.availDate || 'Immediate'}
+              </span>
+            )}
           </div>
+
           <div>
             <span className="text-slate-500 block">Status:</span>
-            <span className={`font-bold mt-0.5 block ${property.status === 'Booked' ? 'text-rose-400' : 'text-emerald-400'}`}>
+            <span
+              className={`font-bold mt-0.5 block ${
+                property.status === 'Booked' ? 'text-rose-400' : 'text-emerald-400'
+              }`}
+            >
               {property.status || 'Available'}
             </span>
           </div>
@@ -393,17 +546,22 @@ export const PropertyDetailsModal: React.FC<PropertyDetailsModalProps> = ({
           </div>
         )}
 
-        {/* --- Customer Reviews & Ratings Section --- */}
+        {/* Reviews Section */}
         <div className="mt-6 border-t border-slate-800 pt-6">
           <h4 className="text-sm font-bold text-white mb-4">Customer Reviews & Ratings</h4>
-          
+
           {reviews && reviews.length > 0 ? (
             <div className="space-y-3 mb-4 max-h-44 overflow-y-auto pr-1">
               {reviews.map((rev: any, idx: number) => (
-                <div key={idx} className="bg-slate-950 p-4 rounded-xl border border-slate-800/80 flex items-start justify-between">
+                <div
+                  key={idx}
+                  className="bg-slate-950 p-4 rounded-xl border border-slate-800/80 flex items-start justify-between"
+                >
                   <div>
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-bold text-white">{rev.userName || rev.name || 'Verified User'}</span>
+                      <span className="text-xs font-bold text-white">
+                        {rev.userName || rev.name || 'Verified User'}
+                      </span>
                       <span className="text-[10px] text-amber-400 flex items-center gap-0.5">
                         <Star className="w-3 h-3 fill-amber-400" /> {rev.rating} / 5
                       </span>
@@ -428,7 +586,10 @@ export const PropertyDetailsModal: React.FC<PropertyDetailsModalProps> = ({
           )}
 
           {/* Add Review Form */}
-          <form onSubmit={handleReviewSubmit} className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3 text-xs">
+          <form
+            onSubmit={handleReviewSubmit}
+            className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3 text-xs"
+          >
             <span className="font-bold text-slate-300 block">Leave a Review</span>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <input
@@ -468,7 +629,7 @@ export const PropertyDetailsModal: React.FC<PropertyDetailsModalProps> = ({
           </form>
         </div>
 
-        {/* Action Buttons */}
+        {/* Action Buttons Footer */}
         <div className="flex items-center justify-between pt-6 mt-6 border-t border-slate-800 gap-3">
           <div className="flex items-center gap-2">
             <a
